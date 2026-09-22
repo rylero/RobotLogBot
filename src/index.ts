@@ -1,19 +1,24 @@
-import { mkdir } from "node:fs/promises";
-import path from "node:path";
-import { createAnthropic } from "./agent.js";
-import { config } from "./config.js";
+import type { Server } from "node:net";
 import { createDiscordClient } from "./discord.js";
-import { connectChiefDelphi } from "./tools/chiefdelphi.js";
+import { config } from "./config.js";
+import { acquireSingletonLock } from "./singleton.js";
 
-await mkdir(path.resolve(config.logDir), { recursive: true });
+console.log(`RobotLogBot starting (model=${config.model}, logs=${config.logDir})`);
 
-const mcp = await connectChiefDelphi();
-const discord = createDiscordClient(createAnthropic(), mcp);
+let lock: Server;
+try {
+  lock = await acquireSingletonLock();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
+
+const discord = createDiscordClient();
 
 const shutdown = async () => {
   console.log("Shutting down");
   discord.destroy();
-  await mcp?.client.close().catch(() => undefined);
+  lock.close();
   process.exit(0);
 };
 

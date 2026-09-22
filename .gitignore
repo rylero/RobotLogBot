@@ -5,3 +5,4 @@ data/
 inbox/
 *.wpilog
 *.log
+vendor/

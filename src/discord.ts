@@ -1,4 +1,5 @@
 import {
+  AttachmentBuilder,
   ChannelType,
   Client,
   Events,
@@ -9,17 +10,23 @@ import {
   type ChatInputCommandInteraction,
   type Message,
 } from "discord.js";
-import type Anthropic from "@anthropic-ai/sdk";
+import path from "node:path";
 import { runAgent } from "./agent.js";
 import { assertAccess, config } from "./config.js";
-import type { McpHandle } from "./tools/chiefdelphi.js";
+import { buildDiscordContext } from "./discordContext.js";
 import { formatLogList, listLogs } from "./tools/logs.js";
 
 const DISCORD_LIMIT = 1900;
-const sessions = new Map<string, Anthropic.MessageParam[]>();
+/** Discord thread/channel id → Claude Agent SDK session id */
+const sessions = new Map<string, string>();
 const botThreads = new Set<string>();
+/** Prevent duplicate MessageCreate handling (gateway retries / races). */
+const inFlightMessages = new Set<string>();
+/** Only one agent turn at a time per thread/channel. */
+const busySessions = new Set<string>();
+const THREAD_ALREADY_EXISTS = 160004;
 
-export function createDiscordClient(anthropic: Anthropic, mcp: McpHandle | null): Client {
+export function createDiscordClient(): Client {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -34,7 +41,7 @@ export function createDiscordClient(anthropic: Anthropic, mcp: McpHandle | null)
     await ready.application.commands.set([
       new SlashCommandBuilder()
         .setName("ask")
-        .setDescription("Ask the log / Chief Delphi agent")
+        .setDescription("Ask RobotLogBot (uses /scope + ClaudeScope for logs)")
         .addStringOption((option) =>
           option.setName("question").setDescription("What do you want to know?").setRequired(true),
         )
@@ -47,7 +54,7 @@ export function createDiscordClient(anthropic: Anthropic, mcp: McpHandle | null)
         )
         .toJSON(),
     ]);
-    console.log(`Discord ready as ${ready.user.tag}`);
+    console.log(`Discord ready as ${ready.user.tag} (model ${config.model})`);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -58,7 +65,7 @@ export function createDiscordClient(anthropic: Anthropic, mcp: McpHandle | null)
         return;
       }
       if (interaction.commandName === "ask") {
-        await handleAsk(interaction, anthropic, mcp);
+        await handleAsk(interaction);
       }
     } catch (error) {
       console.error(error);
@@ -72,11 +79,22 @@ export function createDiscordClient(anthropic: Anthropic, mcp: McpHandle | null)
   });
 
   client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot) return;
+    if (inFlightMessages.has(message.id)) {
+      console.warn(`Skipping duplicate handle for message ${message.id}`);
+      return;
+    }
+    inFlightMessages.add(message.id);
+    let postedStatus = false;
     try {
-      await handleMessage(message, anthropic, mcp, client);
+      postedStatus = await handleMessage(message, client);
     } catch (error) {
       console.error(error);
-      await message.reply("Something broke while handling that message.").catch(() => undefined);
+      if (!postedStatus) {
+        await message.reply("Something broke while handling that message.").catch(() => undefined);
+      }
+    } finally {
+      setTimeout(() => inFlightMessages.delete(message.id), 120_000);
     }
   });
 
@@ -90,15 +108,11 @@ async function handleLogs(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
   await interaction.deferReply();
-  const query = interaction.options.getString("query") ?? undefined;
-  await interaction.editReply(trimForDiscord(formatLogList(await listLogs(query))));
+  const queryText = interaction.options.getString("query") ?? undefined;
+  await interaction.editReply(trimForDiscord(formatLogList(await listLogs(queryText))));
 }
 
-async function handleAsk(
-  interaction: ChatInputCommandInteraction,
-  anthropic: Anthropic,
-  mcp: McpHandle | null,
-): Promise<void> {
+async function handleAsk(interaction: ChatInputCommandInteraction): Promise<void> {
   const denied = assertAccess(interaction.user.id, interaction.channelId, !interaction.inGuild());
   if (denied) {
     await interaction.reply({ content: denied, ephemeral: true });
@@ -106,81 +120,186 @@ async function handleAsk(
   }
   const question = interaction.options.getString("question", true);
   await interaction.deferReply();
+
+  let channelContext = "";
+  if (interaction.channel?.isTextBased()) {
+    try {
+      const fetched = await interaction.channel.messages.fetch({
+        limit: Math.min(100, config.discordHistoryLimit),
+      });
+      const lines = [...fetched.values()]
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((msg) => {
+          const who = msg.author.bot ? `${msg.author.username}[bot]` : msg.author.username;
+          const body = msg.content.trim() || "(no text)";
+          return `${who}: ${body}`;
+        });
+      if (lines.length > 0) {
+        channelContext = `Discord conversation context (recent channel):\n\n## Recent channel messages\n${lines.join("\n")}`;
+        if (channelContext.length > config.discordContextMaxChars) {
+          channelContext = `…[truncated]\n${channelContext.slice(-config.discordContextMaxChars)}`;
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch /ask channel context", error);
+    }
+  }
+
   const thread = await startThreadFromInteraction(interaction, question);
-  const sessionId = thread?.id ?? interaction.id;
+  const key = thread?.id ?? interaction.id;
   if (thread) botThreads.add(thread.id);
 
-  const { reply, history } = await runAgent({
-    anthropic,
-    mcp,
-    history: sessions.get(sessionId) ?? [],
-    userText: question,
+  const userText = [channelContext, `User question:\n${question}`].filter(Boolean).join("\n\n");
+  const { reply, sessionId, images } = await runAgent({
+    sessionId: sessions.get(key),
+    userText,
+    plotLabel: key,
     onProgress: async (text) => {
       if (thread) await thread.send(text).catch(() => undefined);
       else await interaction.editReply(text).catch(() => undefined);
     },
   });
-  sessions.set(sessionId, history);
-  await sendChunks(thread ?? interaction, reply);
+  if (sessionId) sessions.set(key, sessionId);
+  await sendChunks(thread ?? interaction, reply, images);
 }
 
-async function handleMessage(
-  message: Message,
-  anthropic: Anthropic,
-  mcp: McpHandle | null,
-  client: Client,
-): Promise<void> {
-  if (message.author.bot) return;
+async function handleMessage(message: Message, client: Client): Promise<boolean> {
+  if (message.author.bot) return false;
   const isDm = message.channel.type === ChannelType.DM;
   const parentId = message.channel.isThread() ? message.channel.parentId : message.channelId;
   const inBotThread = message.channel.isThread() && botThreads.has(message.channel.id);
   const mentioned = client.user ? message.mentions.has(client.user) : false;
 
-  if (!isDm && !inBotThread && !mentioned) return;
-  if (inBotThread && !mentioned && message.reference) {
-    // allow all follow-ups in sessions we started
-  }
+  if (!isDm && !inBotThread && !mentioned) return false;
 
   const denied = assertAccess(message.author.id, parentId, isDm);
   if (denied) {
     if (mentioned || isDm) await message.reply(denied);
-    return;
+    return false;
   }
 
   const question = stripMention(message.content, client.user?.id);
   const saved = await saveAttachments(message);
-  const userText = [question, saved].filter(Boolean).join("\n");
-  if (!userText.trim()) return;
+
+  // Capture parent channel before we may move into a new thread.
+  const parentForContext =
+    !message.channel.isThread() && message.channel.isTextBased() ? message.channel : null;
 
   let thread = message.channel.isThread() ? message.channel : null;
-  if (!thread && !isDm && message.channel.isTextBased() && "threads" in message.channel) {
-    thread = await message.startThread({
-      name: threadName(question || "log question"),
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-    });
-    botThreads.add(thread.id);
+  if (!thread) {
+    thread = await resolveMessageThread(message);
+  }
+  const startingNewThread =
+    !thread && !isDm && message.channel.isTextBased() && "threads" in message.channel;
+
+  const discordContext = await buildDiscordContext(message, {
+    botId: client.user?.id,
+    historyLimit: config.discordHistoryLimit,
+    replyDepth: config.discordReplyDepth,
+    maxChars: config.discordContextMaxChars,
+    // When @mentioned in a channel, pull parent history so the new thread still sees the room.
+    parentChannel: startingNewThread || (thread && parentForContext) ? parentForContext : null,
+  });
+
+  const userText = [
+    discordContext,
+    saved,
+    `User message from ${message.author.username}:\n${question || "(no text)"}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  if (!question.trim() && !saved && !discordContext) return false;
+
+  if (startingNewThread) {
+    thread = await ensureThread(message, question);
   }
   if (thread) botThreads.add(thread.id);
 
   const replyChannel = thread ?? message.channel;
-  if (!replyChannel.isSendable()) return;
-  const status = await replyChannel.send("Looking…");
-  const sessionId = thread?.id ?? message.channelId;
-  const { reply, history } = await runAgent({
-    anthropic,
-    mcp,
-    history: sessions.get(sessionId) ?? [],
-    userText,
-    onProgress: async (text) => {
-      await status.edit(trimForDiscord(text)).catch(() => undefined);
-    },
-  });
-  sessions.set(sessionId, history);
-  await status.edit(trimForDiscord(firstChunk(reply))).catch(() => undefined);
-  const rest = splitMessage(reply).slice(1);
-  for (const chunk of rest) {
-    await replyChannel.send(chunk);
+  if (!replyChannel.isSendable()) return false;
+
+  const key = thread?.id ?? message.channelId;
+  if (busySessions.has(key)) {
+    await replyChannel
+      .send("Still working on the previous question in this thread — hang tight.")
+      .catch(() => undefined);
+    return true;
   }
+  busySessions.add(key);
+
+  let status: Message;
+  try {
+    status = await replyChannel.send("Looking…");
+    const { reply, sessionId, images } = await runAgent({
+      sessionId: sessions.get(key),
+      userText,
+      plotLabel: key,
+      onProgress: async (text) => {
+        await status.edit(trimForDiscord(text)).catch(() => undefined);
+      },
+    });
+    if (sessionId) sessions.set(key, sessionId);
+    const chunks = splitMessage(reply);
+    const files = toAttachments(images);
+    await status
+      .edit({
+        content: trimForDiscord(chunks[0] ?? "(empty)"),
+        files: files.slice(0, 10),
+      })
+      .catch(async () => {
+        await status.edit(trimForDiscord(chunks[0] ?? "(empty)")).catch(() => undefined);
+        if (files.length > 0) await replyChannel.send({ files: files.slice(0, 10) });
+      });
+    for (const chunk of chunks.slice(1)) {
+      await replyChannel.send(chunk);
+    }
+    return true;
+  } finally {
+    busySessions.delete(key);
+  }
+}
+
+async function ensureThread(message: Message, question: string) {
+  const existing = await resolveMessageThread(message);
+  if (existing) return existing;
+
+  try {
+    return await message.startThread({
+      name: threadName(question || "log question"),
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+    });
+  } catch (error) {
+    // Race: another handler (or Discord) created the thread first.
+    if (isThreadAlreadyExistsError(error)) {
+      const recovered = await resolveMessageThread(message);
+      if (recovered) return recovered;
+    }
+    throw error;
+  }
+}
+
+/** Public message threads use the starter message id as the thread channel id. */
+async function resolveMessageThread(message: Message) {
+  if (message.thread?.isThread()) return message.thread;
+  try {
+    const fetched = await message.fetch();
+    if (fetched.thread?.isThread()) return fetched.thread;
+  } catch {
+    // ignore
+  }
+  try {
+    const channel = await message.client.channels.fetch(message.id);
+    if (channel?.isThread()) return channel;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function isThreadAlreadyExistsError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  const code = (error as { code: unknown }).code;
+  return code === "MessageExistingThread" || code === THREAD_ALREADY_EXISTS;
 }
 
 async function saveAttachments(message: Message): Promise<string> {
@@ -224,20 +343,35 @@ async function startThreadFromInteraction(
 }
 
 async function sendChunks(
-  target: { send: (content: string) => Promise<unknown> } | ChatInputCommandInteraction,
+  target: { send: (payload: string | { content?: string; files?: AttachmentBuilder[] }) => Promise<unknown> } | ChatInputCommandInteraction,
   text: string,
+  images: string[] = [],
 ): Promise<void> {
   const chunks = splitMessage(text);
+  const files = toAttachments(images);
   if ("editReply" in target) {
-    await target.editReply(chunks[0] ?? "(empty)");
+    await target.editReply({
+      content: chunks[0] ?? "(empty)",
+      files: files.slice(0, 10),
+    });
     for (const chunk of chunks.slice(1)) {
       await target.followUp({ content: chunk });
     }
     return;
   }
-  for (const chunk of chunks) {
+  await target.send({
+    content: chunks[0] ?? "(empty)",
+    files: files.slice(0, 10),
+  });
+  for (const chunk of chunks.slice(1)) {
     await target.send(chunk);
   }
+}
+
+function toAttachments(images: string[]): AttachmentBuilder[] {
+  return images.map(
+    (file) => new AttachmentBuilder(file, { name: path.basename(file) }),
+  );
 }
 
 function stripMention(content: string, botId?: string): string {
@@ -248,10 +382,6 @@ function stripMention(content: string, botId?: string): string {
 function threadName(question: string): string {
   const cleaned = question.replace(/\s+/g, " ").trim() || "log question";
   return cleaned.slice(0, 90);
-}
-
-function firstChunk(text: string): string {
-  return splitMessage(text)[0] ?? "(empty)";
 }
 
 function trimForDiscord(text: string): string {
@@ -271,4 +401,3 @@ function splitMessage(text: string): string[] {
   if (rest) chunks.push(rest);
   return chunks;
 }
-

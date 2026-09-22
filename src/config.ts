@@ -39,6 +39,10 @@ export const config = {
   rcloneRemote: optional("RCLONE_REMOTE"),
   maxToolRounds: 24,
   maxToolResultChars: 80_000,
+  /** How many recent Discord messages to pull into agent context. */
+  discordHistoryLimit: Number(optional("DISCORD_HISTORY_LIMIT", "40")) || 40,
+  discordReplyDepth: Number(optional("DISCORD_REPLY_DEPTH", "6")) || 6,
+  discordContextMaxChars: Number(optional("DISCORD_CONTEXT_MAX_CHARS", "14000")) || 14_000,
 };
 
 export function assertAccess(userId: string, channelId: string | null, isDm: boolean): string | null {
@@ -49,7 +53,7 @@ export function assertAccess(userId: string, channelId: string | null, isDm: boo
     return config.allowedUserIds.size > 0 ? null : "DMs are disabled unless ALLOWED_USER_IDS is set.";
   }
   if (config.allowedChannelIds.size === 0) {
-    return "ALLOWED_CHANNEL_IDS is empty — refuse to listen everywhere.";
+    return null;
   }
   if (!channelId || !config.allowedChannelIds.has(channelId)) {
     return "This channel is not enabled for the log bot.";

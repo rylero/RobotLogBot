@@ -1,0 +1,33 @@
+# Portainer: Stacks → Add stack → Web editor, or pull from git.
+# No published ports — Discord/Anthropic outbound only.
+
+services:
+  robotlogbot:
+    build:
+      context: .
+      args:
+        CLAUDESCOPE_VERSION: v1.2.1
+        CHIEFDELPHI_REF: main
+    image: robotlogbot:latest
+    container_name: robotlogbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LOG_DIR: /data/logs
+      CHIEFDELPHI_MCP_CWD: /app/vendor/chiefdelphi-mcp
+      CLAUDESCOPE_BIN: /usr/local/bin/ClaudeScope
+      # Optional: CLAUDE_MODEL=claude-sonnet-4-6
+    volumes:
+      # Host folder of .wpilog files (rclone sync target or NFS share)
+      - ${HOST_LOG_DIR:-./data/logs}:/data/logs:ro
+      # Persist Chief Delphi FTS index
+      - chiefdelphi-data:/app/vendor/chiefdelphi-mcp/data
+      # Plots + runtime data
+      - bot-data:/app/data
+    # Uncomment if you mount a newer ClaudeScope binary with `query` support:
+    # - ${HOST_CLAUDESCOPE_BIN}:/usr/local/bin/ClaudeScope:ro
+
+volumes:
+  chiefdelphi-data:
+  bot-data:
