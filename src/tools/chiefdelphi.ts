@@ -30,7 +30,7 @@ export async function connectChiefDelphi(): Promise<McpHandle | null> {
     args: ["tsx", "src/index.ts"],
     cwd: config.chiefDelphiCwd,
   });
-  const client = new Client({ name: "discord-log-bot", version: "0.1.0" });
+  const client = new Client({ name: "robot-log-bot", version: "0.1.0" });
   try {
     await client.connect(transport);
     const listed = await client.listTools();

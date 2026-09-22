@@ -34,7 +34,7 @@ export const config = {
     (process.platform === "win32" ? "ClaudeScope.exe" : "ClaudeScope"),
   chiefDelphiCwd: optional(
     "CHIEFDELPHI_MCP_CWD",
-    path.resolve(process.cwd(), "vendor/chiefdelphi-mcp"),
+    path.resolve(process.cwd(), "../chiefdelphi-mcp"),
   ),
   rcloneRemote: optional("RCLONE_REMOTE"),
   maxToolRounds: 24,

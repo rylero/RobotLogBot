@@ -1,10 +1,10 @@
 {
-  "name": "discord-log-bot",
+  "name": "robot-log-bot",
   "version": "0.1.0",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/rylero/discord-log-bot.git"
+    "url": "https://github.com/rylero/RobotLogBot.git"
   },
   "type": "module",
   "engines": {

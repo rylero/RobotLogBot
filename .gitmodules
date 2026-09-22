@@ -1,6 +1,0 @@
-[submodule "vendor/ClaudeScope"]
-	path = vendor/ClaudeScope
-	url = https://github.com/rylero/ClaudeScope.git
-[submodule "vendor/chiefdelphi-mcp"]
-	path = vendor/chiefdelphi-mcp
-	url = https://github.com/rylero/chiefdelphi-mcp.git
