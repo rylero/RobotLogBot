@@ -9,36 +9,40 @@ Default model: `claude-sonnet-4-6`.
 
 ## Portainer (recommended)
 
-Portainer clones this repo and builds the image. You do **not** need to clone manually on the host (except optionally for rclone/scripts).
+The image is built on GitHub Actions and published to **GHCR** (`ghcr.io/rylero/robotlogbot:latest`). Portainer only pulls — it does not build.
 
-### 1. Prepare log storage on the host
+### 1. Make the package pullable
 
-Sync wpilogs to a folder the Docker host can see (see **rclone** below), e.g. `/mnt/robot-logs/2026-Rebuilt`.
+After the first successful Actions run:
 
-### 2. Create the stack from GitHub
+1. GitHub → repo → **Packages** → `robotlogbot`
+2. **Package settings** → set visibility to **Public**  
+   (or keep private and add a Portainer registry credential with a PAT that has `read:packages`)
 
-1. Portainer → **Stacks** → **Add stack**
-2. Build method: **Repository**
-3. Repository URL: `https://github.com/rylero/RobotLogBot`
-4. Compose path: `docker-compose.yml` (branch `main`)
-5. Enable **Authenticate** only if the repo is private (it’s public)
-6. Under **Environment variables**, add:
+### 2. Host logs (rclone)
+
+Sync wpilogs on the Docker host (see **rclone** below), e.g. `/mnt/robot-logs/2026-Rebuilt`.
+
+### 3. Create the stack
+
+1. Portainer → **Stacks** → **Add stack** → **Web editor**
+2. Paste [`docker-compose.yml`](docker-compose.yml) (or deploy from Repository pointing at this file)
+3. Environment variables:
 
 | Name | Value |
 | --- | --- |
 | `DISCORD_TOKEN` | Discord bot token |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `HOST_LOG_DIR` | Absolute host path, e.g. `/mnt/robot-logs/2026-Rebuilt` |
-| `CLAUDE_MODEL` | optional, default `claude-sonnet-4-6` |
-| `ALLOWED_CHANNEL_IDS` | optional |
+| `CLAUDE_MODEL` | optional |
 
-7. **Deploy the stack**
+4. **Deploy the stack**
 
-Portainer will clone the repo, build `Dockerfile` (installs ClaudeScope + vendors chiefdelphi-mcp), and start the container. Check **Logs** for `Discord ready` and `Single-instance lock acquired`.
+Update later: **Pull and redeploy** (image tag `latest` is updated on every push to `main`).
 
-No ports to publish. Redeploy / pull+rebuild when you push to `main`.
+Local/dev build without GHCR: `docker compose -f docker-compose.build.yml up -d --build`.
 
-### 3. rclone on the host (Google Drive → HOST_LOG_DIR)
+### 4. rclone on the host (Google Drive → HOST_LOG_DIR)
 
 Do this on the **Portainer host** (or another always-on machine that mounts the same path), not inside the bot container.
 

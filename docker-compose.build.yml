@@ -1,13 +1,14 @@
-# Portainer: Stacks → Add stack → Web editor (or Repository for this file only).
-# Pulls a pre-built image from GHCR — no build on the closet box.
-# No published ports — Discord/Anthropic outbound only.
-
+# Optional: build locally instead of pulling GHCR
 services:
   robotlogbot:
-    image: ghcr.io/rylero/robotlogbot:latest
+    build:
+      context: .
+      args:
+        CLAUDESCOPE_VERSION: v1.2.1
+        CHIEFDELPHI_REF: main
+    image: robotlogbot:local
     container_name: robotlogbot
     restart: unless-stopped
-    pull_policy: always
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
@@ -18,7 +19,6 @@ services:
       CHIEFDELPHI_MCP_CWD: /app/vendor/chiefdelphi-mcp
       CLAUDESCOPE_BIN: /usr/local/bin/ClaudeScope
     volumes:
-      # Absolute path on the Docker host (rclone sync target)
       - ${HOST_LOG_DIR}:/data/logs:ro
       - chiefdelphi-data:/app/vendor/chiefdelphi-mcp/data
       - bot-data:/app/data
