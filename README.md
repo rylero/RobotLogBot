@@ -107,4 +107,4 @@ npm start
 
 ## Discord
 
-`/ask …` or `@bot …`. Threads keep session context. Design → `/chiefdelphi`; logs → `/scope`.
+`@bot …` (or DM / continue in a bot thread). Threads keep session context. Design → `/chiefdelphi`; logs → `/scope`.

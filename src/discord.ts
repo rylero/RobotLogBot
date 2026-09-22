@@ -5,16 +5,13 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
-  SlashCommandBuilder,
   ThreadAutoArchiveDuration,
-  type ChatInputCommandInteraction,
   type Message,
 } from "discord.js";
 import path from "node:path";
 import { runAgent } from "./agent.js";
 import { assertAccess, config } from "./config.js";
 import { buildDiscordContext } from "./discordContext.js";
-import { formatLogList, listLogs } from "./tools/logs.js";
 
 const DISCORD_LIMIT = 1900;
 /** Discord thread/channel id → Claude Agent SDK session id */
@@ -38,44 +35,9 @@ export function createDiscordClient(): Client {
   });
 
   client.once(Events.ClientReady, async (ready) => {
-    await ready.application.commands.set([
-      new SlashCommandBuilder()
-        .setName("ask")
-        .setDescription("Ask RobotLogBot (uses /scope + ClaudeScope for logs)")
-        .addStringOption((option) =>
-          option.setName("question").setDescription("What do you want to know?").setRequired(true),
-        )
-        .toJSON(),
-      new SlashCommandBuilder()
-        .setName("logs")
-        .setDescription("List recent .wpilog files on this machine")
-        .addStringOption((option) =>
-          option.setName("query").setDescription("Optional filename filter").setRequired(false),
-        )
-        .toJSON(),
-    ]);
+    // Clear any previously registered slash commands — @mention / DMs / bot threads only.
+    await ready.application.commands.set([]);
     console.log(`Discord ready as ${ready.user.tag} (model ${config.model})`);
-  });
-
-  client.on(Events.InteractionCreate, async (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
-    try {
-      if (interaction.commandName === "logs") {
-        await handleLogs(interaction);
-        return;
-      }
-      if (interaction.commandName === "ask") {
-        await handleAsk(interaction);
-      }
-    } catch (error) {
-      console.error(error);
-      const text = "Something broke while handling that command.";
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(text).catch(() => undefined);
-      } else {
-        await interaction.reply({ content: text, ephemeral: true }).catch(() => undefined);
-      }
-    }
   });
 
   client.on(Events.MessageCreate, async (message) => {
@@ -99,68 +61,6 @@ export function createDiscordClient(): Client {
   });
 
   return client;
-}
-
-async function handleLogs(interaction: ChatInputCommandInteraction): Promise<void> {
-  const denied = assertAccess(interaction.user.id, interaction.channelId, !interaction.inGuild());
-  if (denied) {
-    await interaction.reply({ content: denied, ephemeral: true });
-    return;
-  }
-  await interaction.deferReply();
-  const queryText = interaction.options.getString("query") ?? undefined;
-  await interaction.editReply(trimForDiscord(formatLogList(await listLogs(queryText))));
-}
-
-async function handleAsk(interaction: ChatInputCommandInteraction): Promise<void> {
-  const denied = assertAccess(interaction.user.id, interaction.channelId, !interaction.inGuild());
-  if (denied) {
-    await interaction.reply({ content: denied, ephemeral: true });
-    return;
-  }
-  const question = interaction.options.getString("question", true);
-  await interaction.deferReply();
-
-  let channelContext = "";
-  if (interaction.channel?.isTextBased()) {
-    try {
-      const fetched = await interaction.channel.messages.fetch({
-        limit: Math.min(100, config.discordHistoryLimit),
-      });
-      const lines = [...fetched.values()]
-        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-        .map((msg) => {
-          const who = msg.author.bot ? `${msg.author.username}[bot]` : msg.author.username;
-          const body = msg.content.trim() || "(no text)";
-          return `${who}: ${body}`;
-        });
-      if (lines.length > 0) {
-        channelContext = `Discord conversation context (recent channel):\n\n## Recent channel messages\n${lines.join("\n")}`;
-        if (channelContext.length > config.discordContextMaxChars) {
-          channelContext = `…[truncated]\n${channelContext.slice(-config.discordContextMaxChars)}`;
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch /ask channel context", error);
-    }
-  }
-
-  const thread = await startThreadFromInteraction(interaction, question);
-  const key = thread?.id ?? interaction.id;
-  if (thread) botThreads.add(thread.id);
-
-  const userText = [channelContext, `User question:\n${question}`].filter(Boolean).join("\n\n");
-  const { reply, sessionId, images } = await runAgent({
-    sessionId: sessions.get(key),
-    userText,
-    plotLabel: key,
-    onProgress: async (text) => {
-      if (thread) await thread.send(text).catch(() => undefined);
-      else await interaction.editReply(text).catch(() => undefined);
-    },
-  });
-  if (sessionId) sessions.set(key, sessionId);
-  await sendChunks(thread ?? interaction, reply, images);
 }
 
 async function handleMessage(message: Message, client: Client): Promise<boolean> {
@@ -320,52 +220,6 @@ async function saveAttachments(message: Message): Promise<string> {
     saved.push(dest);
   }
   return `Attached log(s) saved to:\n${saved.join("\n")}`;
-}
-
-async function startThreadFromInteraction(
-  interaction: ChatInputCommandInteraction,
-  question: string,
-) {
-  const channel = interaction.channel;
-  if (!channel || channel.isDMBased() || !channel.isTextBased() || !("threads" in channel)) {
-    return null;
-  }
-  try {
-    const starter = await interaction.fetchReply();
-    return await starter.startThread({
-      name: threadName(question),
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-    });
-  } catch (error) {
-    console.error(error);
-    return null;
-  }
-}
-
-async function sendChunks(
-  target: { send: (payload: string | { content?: string; files?: AttachmentBuilder[] }) => Promise<unknown> } | ChatInputCommandInteraction,
-  text: string,
-  images: string[] = [],
-): Promise<void> {
-  const chunks = splitMessage(text);
-  const files = toAttachments(images);
-  if ("editReply" in target) {
-    await target.editReply({
-      content: chunks[0] ?? "(empty)",
-      files: files.slice(0, 10),
-    });
-    for (const chunk of chunks.slice(1)) {
-      await target.followUp({ content: chunk });
-    }
-    return;
-  }
-  await target.send({
-    content: chunks[0] ?? "(empty)",
-    files: files.slice(0, 10),
-  });
-  for (const chunk of chunks.slice(1)) {
-    await target.send(chunk);
-  }
 }
 
 function toAttachments(images: string[]): AttachmentBuilder[] {
