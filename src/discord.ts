@@ -47,14 +47,14 @@ export function createDiscordClient(): Client {
       return;
     }
     inFlightMessages.add(message.id);
-    let postedStatus = false;
     try {
-      postedStatus = await handleMessage(message, client);
+      await handleMessage(message, client);
     } catch (error) {
       console.error(error);
-      if (!postedStatus) {
-        await message.reply("Something broke while handling that message.").catch(() => undefined);
-      }
+      const detail = error instanceof Error ? error.message : String(error);
+      await message
+        .reply(`Something broke while handling that message.\n\`${trimForDiscord(detail)}\``)
+        .catch(() => undefined);
     } finally {
       setTimeout(() => inFlightMessages.delete(message.id), 120_000);
     }
@@ -127,7 +127,7 @@ async function handleMessage(message: Message, client: Client): Promise<boolean>
   }
   busySessions.add(key);
 
-  let status: Message;
+  let status: Message | null = null;
   try {
     status = await replyChannel.send("Looking…");
     const { reply, sessionId, images } = await runAgent({
@@ -135,7 +135,7 @@ async function handleMessage(message: Message, client: Client): Promise<boolean>
       userText,
       plotLabel: key,
       onProgress: async (text) => {
-        await status.edit(trimForDiscord(text)).catch(() => undefined);
+        await status?.edit(trimForDiscord(text)).catch(() => undefined);
       },
     });
     if (sessionId) sessions.set(key, sessionId);
@@ -147,13 +147,23 @@ async function handleMessage(message: Message, client: Client): Promise<boolean>
         files: files.slice(0, 10),
       })
       .catch(async () => {
-        await status.edit(trimForDiscord(chunks[0] ?? "(empty)")).catch(() => undefined);
+        await status?.edit(trimForDiscord(chunks[0] ?? "(empty)")).catch(() => undefined);
         if (files.length > 0) await replyChannel.send({ files: files.slice(0, 10) });
       });
     for (const chunk of chunks.slice(1)) {
       await replyChannel.send(chunk);
     }
     return true;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("Agent/Discord turn failed:", detail);
+    if (status) {
+      await status
+        .edit(trimForDiscord(`Something broke: ${detail}`))
+        .catch(() => undefined);
+      return true;
+    }
+    throw error;
   } finally {
     busySessions.delete(key);
   }
