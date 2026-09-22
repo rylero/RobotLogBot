@@ -1,58 +1,106 @@
 # RobotLogBot
 
-Always-on Discord agent for FRC log analysis. It talks to people in a team channel, reads `.wpilog` files from a **local folder**, and runs the **Claude Agent SDK** with:
+Always-on Discord agent for FRC log analysis. Uses the Claude Agent SDK with:
 
 - **scope** — ClaudeScope log analysis ([ClaudeScope](https://github.com/rylero/ClaudeScope))
-- **chiefdelphi** — FRC design research via [chiefdelphi-mcp](https://github.com/rylero/chiefdelphi-mcp) (Open Alliance–aware)
+- **chiefdelphi** — FRC design research via [chiefdelphi-mcp](https://github.com/rylero/chiefdelphi-mcp)
 
-Model defaults to **Sonnet** (`claude-sonnet-4-6`). Override with `CLAUDE_MODEL` in `.env`.
+Default model: `claude-sonnet-4-6`.
 
-## Local setup
+## Portainer (recommended)
+
+Portainer clones this repo and builds the image. You do **not** need to clone manually on the host (except optionally for rclone/scripts).
+
+### 1. Prepare log storage on the host
+
+Sync wpilogs to a folder the Docker host can see (see **rclone** below), e.g. `/mnt/robot-logs/2026-Rebuilt`.
+
+### 2. Create the stack from GitHub
+
+1. Portainer → **Stacks** → **Add stack**
+2. Build method: **Repository**
+3. Repository URL: `https://github.com/rylero/RobotLogBot`
+4. Compose path: `docker-compose.yml` (branch `main`)
+5. Enable **Authenticate** only if the repo is private (it’s public)
+6. Under **Environment variables**, add:
+
+| Name | Value |
+| --- | --- |
+| `DISCORD_TOKEN` | Discord bot token |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `HOST_LOG_DIR` | Absolute host path, e.g. `/mnt/robot-logs/2026-Rebuilt` |
+| `CLAUDE_MODEL` | optional, default `claude-sonnet-4-6` |
+| `ALLOWED_CHANNEL_IDS` | optional |
+
+7. **Deploy the stack**
+
+Portainer will clone the repo, build `Dockerfile` (installs ClaudeScope + vendors chiefdelphi-mcp), and start the container. Check **Logs** for `Discord ready` and `Single-instance lock acquired`.
+
+No ports to publish. Redeploy / pull+rebuild when you push to `main`.
+
+### 3. rclone on the host (Google Drive → HOST_LOG_DIR)
+
+Do this on the **Portainer host** (or another always-on machine that mounts the same path), not inside the bot container.
+
+```bash
+# Install: https://rclone.org/install/
+curl https://rclone.org/install.sh | sudo bash
+
+rclone config
+```
+
+In `rclone config`:
+
+1. `n` new remote — name it e.g. `gdrive`
+2. Storage: **Google Drive**
+3. Scope: full drive (or drive.readonly)
+4. For a **Shared drive** (Team Drive): set `team_drive` when asked, or after config edit:
+   ```bash
+   rclone config show gdrive
+   # then: rclone backend drives gdrive:
+   # pick the Shared drive id and set team_drive = <id>
+   ```
+5. Finish auth (browser / rclone authorize on another machine if headless)
+
+Find the folder:
+
+```bash
+rclone lsf "gdrive:Shared drives/Popcorn Penguins/RobotLogs/2026-Rebuilt" --drive-shared-with-me
+# or browse:
+rclone lsd "gdrive:" 
+rclone lsd "gdrive:Popcorn Penguins/RobotLogs"
+```
+
+First sync + cron (every 10 minutes):
+
+```bash
+sudo mkdir -p /mnt/robot-logs/2026-Rebuilt
+
+rclone sync "gdrive:Popcorn Penguins/RobotLogs/2026-Rebuilt" /mnt/robot-logs/2026-Rebuilt \
+  --fast-list -v
+
+# crontab -e
+*/10 * * * * rclone sync "gdrive:Popcorn Penguins/RobotLogs/2026-Rebuilt" /mnt/robot-logs/2026-Rebuilt --fast-list >> /var/log/rclone-robot-logs.log 2>&1
+```
+
+Use the remote path that matches *your* Drive layout (Shared drive names vary). Verify with:
+
+```bash
+ls /mnt/robot-logs/2026-Rebuilt/*.wpilog | head
+```
+
+Set Portainer `HOST_LOG_DIR=/mnt/robot-logs/2026-Rebuilt`.
+
+## Local Windows (dev)
 
 ```bash
 git clone https://github.com/rylero/RobotLogBot.git
 git clone https://github.com/rylero/chiefdelphi-mcp.git
-cd RobotLogBot
-npm install
-cp .env.example .env
-# Install ClaudeScope on PATH: https://github.com/rylero/ClaudeScope/releases
+cd RobotLogBot && npm install && cp .env.example .env
+# ClaudeScope on PATH; set LOG_DIR to Drive Desktop folder
 npm start
 ```
 
-Set `DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, and `LOG_DIR`. `CHIEFDELPHI_MCP_CWD` defaults to `../chiefdelphi-mcp`.
+## Discord
 
-Only one process may run at a time (lock on `127.0.0.1:39281`).
-
-## Portainer (closet server)
-
-1. On the host, sync wpilogs into a folder (rclone cron recommended — Drive Desktop does not run in Linux containers):
-
-   ```bash
-   rclone sync gdrive:RobotLogs/2026-Rebuilt /mnt/robot-logs/2026-Rebuilt --fast-list
-   ```
-
-2. Clone this repo on the Portainer host (or use Portainer git deploy).
-
-3. Copy `.env.portainer.example` → `.env` and fill tokens. Set `HOST_LOG_DIR` in the stack env or compose to the host log path.
-
-4. In Portainer → **Stacks** → **Add stack**:
-   - Build method: repository or upload `docker-compose.yml` + `Dockerfile`
-   - Env: paste from `.env`, plus `HOST_LOG_DIR=/mnt/robot-logs/2026-Rebuilt`
-   - Deploy
-
-5. Check container logs for `Discord ready` and `Single-instance lock acquired`.
-
-No ports need publishing. Volumes persist the Chief Delphi SQLite index and plot/cache data.
-
-**ClaudeScope note:** the image downloads the published Linux binary. If you need a newer build (e.g. with `query`), mount it over `/usr/local/bin/ClaudeScope`.
-
-## How Google Drive is used
-
-The bot never talks to Drive. Point `LOG_DIR` / `HOST_LOG_DIR` at a local sync of the team folder.
-
-## Discord usage
-
-- `/ask …` or `@ClaudeBot …`
-- Follow-ups in the bot’s thread continue the session
-- Reply-to + `@bot` includes the referenced message and recent channel history
-- Design questions use `/chiefdelphi`; log questions use `/scope`
+`/ask …` or `@bot …`. Threads keep session context. Design → `/chiefdelphi`; logs → `/scope`.

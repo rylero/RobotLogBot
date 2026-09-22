@@ -1,4 +1,6 @@
-# Portainer: Stacks → Add stack → Web editor, or pull from git.
+# Deploy from Portainer → Stacks → Add stack → Repository
+# Repo: https://github.com/rylero/RobotLogBot  Compose: docker-compose.yml
+# Set env vars in the Portainer UI (do not rely on a gitignored .env file).
 # No published ports — Discord/Anthropic outbound only.
 
 services:
@@ -11,22 +13,20 @@ services:
     image: robotlogbot:latest
     container_name: robotlogbot
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+      ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS:-}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS:-}
       LOG_DIR: /data/logs
       CHIEFDELPHI_MCP_CWD: /app/vendor/chiefdelphi-mcp
       CLAUDESCOPE_BIN: /usr/local/bin/ClaudeScope
-      # Optional: CLAUDE_MODEL=claude-sonnet-4-6
     volumes:
-      # Host folder of .wpilog files (rclone sync target or NFS share)
-      - ${HOST_LOG_DIR:-./data/logs}:/data/logs:ro
-      # Persist Chief Delphi FTS index
+      # Absolute path on the Docker/Portainer host (set HOST_LOG_DIR in stack env)
+      - ${HOST_LOG_DIR}:/data/logs:ro
       - chiefdelphi-data:/app/vendor/chiefdelphi-mcp/data
-      # Plots + runtime data
       - bot-data:/app/data
-    # Uncomment if you mount a newer ClaudeScope binary with `query` support:
-    # - ${HOST_CLAUDESCOPE_BIN}:/usr/local/bin/ClaudeScope:ro
 
 volumes:
   chiefdelphi-data:
