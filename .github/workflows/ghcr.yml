@@ -48,7 +48,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            CLAUDESCOPE_VERSION=v1.2.1
+            CLAUDESCOPE_VERSION=v1.2.2
             CHIEFDELPHI_REF=main
+            GITHUB_MCP_VERSION=v1.12.2
           cache-from: type=gha
           cache-to: type=gha,mode=max

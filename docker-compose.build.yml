@@ -4,8 +4,9 @@ services:
     build:
       context: .
       args:
-        CLAUDESCOPE_VERSION: v1.2.1
+        CLAUDESCOPE_VERSION: v1.2.2
         CHIEFDELPHI_REF: main
+        GITHUB_MCP_VERSION: v1.12.2
     image: robotlogbot:local
     container_name: robotlogbot
     restart: unless-stopped
@@ -18,6 +19,11 @@ services:
       LOG_DIR: /data/logs
       CHIEFDELPHI_MCP_CWD: /app/vendor/chiefdelphi-mcp
       CLAUDESCOPE_BIN: /usr/local/bin/ClaudeScope
+      GITHUB_MCP_BIN: /usr/local/bin/github-mcp-server
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+      GITHUB_DEFAULT_REPO: ${GITHUB_DEFAULT_REPO:-}
+      GITHUB_MCP_READ_ONLY: ${GITHUB_MCP_READ_ONLY:-true}
+      GITHUB_MCP_TOOLSETS: ${GITHUB_MCP_TOOLSETS:-repos,pull_requests,issues,git,context}
     volumes:
       - ${HOST_LOG_DIR}:/data/logs:ro
       - chiefdelphi-data:/app/vendor/chiefdelphi-mcp/data

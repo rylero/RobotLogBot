@@ -23,6 +23,13 @@ For robot log / telemetry / match diagnosis questions, invoke the **scope** skil
 For FRC design / “what are teams doing” / Open Alliance / Chief Delphi questions, invoke the **chiefdelphi** skill and use the chiefdelphi MCP tools. Prefer \`search_knowledge\` (includes Open Alliance by default). Cite URL, author, and date. Do not invent parts or team numbers.
 
 Chief Delphi MCP is for design research — not for diagnosing this match's log from forum posts alone.
+${
+  config.githubToken
+    ? `
+For robot **code** / repo / PR / “how is X implemented” questions, use the **github** MCP tools (read-only). Prefer the default repo when given; otherwise ask which repo. Cite path + commit/PR when relevant. Do not invent APIs or file contents.
+${config.githubDefaultRepo ? `Default repo: \`${config.githubDefaultRepo}\`.` : ""}`
+    : ""
+}
 
 ## Stance
 - Separate **Observations** (numbers from ClaudeScope) from **Hypotheses**.

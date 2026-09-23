@@ -1,8 +1,9 @@
 # RobotLogBot — Portainer / Docker
 FROM node:22-bookworm-slim
 
-ARG CLAUDESCOPE_VERSION=v1.2.1
+ARG CLAUDESCOPE_VERSION=v1.2.2
 ARG CHIEFDELPHI_REF=main
+ARG GITHUB_MCP_VERSION=v1.12.2
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git gosu python3 python3-pip python3-venv \
@@ -13,6 +14,13 @@ RUN curl -fsSL -o /usr/local/bin/ClaudeScope \
       "https://github.com/rylero/ClaudeScope/releases/download/${CLAUDESCOPE_VERSION}/ClaudeScope-linux-amd64" \
     && chmod +x /usr/local/bin/ClaudeScope \
     && ClaudeScope version || true
+
+# Official GitHub MCP server (stdio)
+RUN curl -fsSL -o /tmp/github-mcp.tgz \
+      "https://github.com/github/github-mcp-server/releases/download/${GITHUB_MCP_VERSION}/github-mcp-server_Linux_x86_64.tar.gz" \
+    && tar -xzf /tmp/github-mcp.tgz -C /usr/local/bin github-mcp-server \
+    && chmod +x /usr/local/bin/github-mcp-server \
+    && rm /tmp/github-mcp.tgz
 
 WORKDIR /app
 
@@ -45,6 +53,9 @@ ENV NODE_ENV=production \
     LOG_DIR=/data/logs \
     CHIEFDELPHI_MCP_CWD=/app/vendor/chiefdelphi-mcp \
     CLAUDESCOPE_BIN=/usr/local/bin/ClaudeScope \
+    GITHUB_MCP_BIN=/usr/local/bin/github-mcp-server \
+    GITHUB_MCP_READ_ONLY=true \
+    GITHUB_MCP_TOOLSETS=repos,pull_requests,issues,git,context \
     BOT_LOCK_PORT=39281 \
     HOME=/home/node
 

@@ -8,8 +8,18 @@ import { collectNewImages, createPlotDir, snapshotImages } from "./plots.js";
 
 export type ProgressFn = (text: string) => Promise<void>;
 
+type McpServerMap = Record<
+  string,
+  {
+    type: "stdio";
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+  }
+>;
+
 /** Agent SDK stdio MCP configs don't reliably honor cwd — use absolute paths. */
-function chiefDelphiMcp() {
+function chiefDelphiMcp(): McpServerMap {
   const cwd = path.resolve(config.chiefDelphiCwd);
   const entry = path.join(cwd, "src", "index.ts");
   const tsxCli = path.join(cwd, "node_modules", "tsx", "dist", "cli.mjs");
@@ -21,7 +31,7 @@ function chiefDelphiMcp() {
   }
   return {
     chiefdelphi: {
-      type: "stdio" as const,
+      type: "stdio",
       command: process.execPath,
       args: [tsxCli, entry],
       env: {
@@ -32,6 +42,29 @@ function chiefDelphiMcp() {
       },
     },
   };
+}
+
+/** Official GitHub MCP — only when a PAT is configured. */
+function githubMcp(): McpServerMap {
+  if (!config.githubToken) return {};
+  const args = ["stdio"];
+  if (config.githubMcpReadOnly) args.push("--read-only");
+  if (config.githubMcpToolsets) args.push("--toolsets", config.githubMcpToolsets);
+  return {
+    github: {
+      type: "stdio",
+      command: config.githubMcpBin,
+      args,
+      env: {
+        ...process.env,
+        GITHUB_PERSONAL_ACCESS_TOKEN: config.githubToken,
+      },
+    },
+  };
+}
+
+function mcpServers(): McpServerMap {
+  return { ...chiefDelphiMcp(), ...githubMcp() };
 }
 
 function looksLikeLogQuestion(text: string): boolean {
@@ -46,6 +79,12 @@ function looksLikeDesignQuestion(text: string): boolean {
   );
 }
 
+function looksLikeCodeQuestion(text: string): boolean {
+  return /\b(code|repo|github|pr\b|pull request|commit|blame|subsystem|class |method |command|file\.java|\.java|\.kt|gradle|advantagekit|how (is|does|did) (the )?(code|auton|teleop))\b/i.test(
+    text,
+  );
+}
+
 function buildPrompt(userText: string, firstTurn: boolean, plotHint: string): string {
   const parts: string[] = [];
   if (firstTurn && looksLikeLogQuestion(userText)) {
@@ -56,6 +95,14 @@ function buildPrompt(userText: string, firstTurn: boolean, plotHint: string): st
   }
   if (firstTurn) {
     parts.push(`Team logs directory: ${path.resolve(config.logDir)}`);
+    if (config.githubToken && config.githubDefaultRepo) {
+      parts.push(`Default GitHub repo for code questions: ${config.githubDefaultRepo}`);
+    }
+    if (looksLikeCodeQuestion(userText) && config.githubToken) {
+      parts.push(
+        "For robot code / repo questions, use the github MCP tools (read-only) to inspect files and history.",
+      );
+    }
   }
   parts.push(plotHint);
   parts.push(userText);
@@ -100,7 +147,7 @@ export async function runAgent(options: {
         ANTHROPIC_API_KEY: config.anthropicApiKey,
         MSYS_NO_PATHCONV: "1",
       },
-      mcpServers: chiefDelphiMcp(),
+      mcpServers: mcpServers(),
       strictMcpConfig: true,
       systemPrompt: {
         type: "preset",

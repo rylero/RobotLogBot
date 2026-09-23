@@ -17,6 +17,12 @@ services:
       LOG_DIR: /data/logs
       CHIEFDELPHI_MCP_CWD: /app/vendor/chiefdelphi-mcp
       CLAUDESCOPE_BIN: /usr/local/bin/ClaudeScope
+      GITHUB_MCP_BIN: /usr/local/bin/github-mcp-server
+      # Fine-grained PAT with Contents: Read on the robot repo(s)
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+      GITHUB_DEFAULT_REPO: ${GITHUB_DEFAULT_REPO:-}
+      GITHUB_MCP_READ_ONLY: ${GITHUB_MCP_READ_ONLY:-true}
+      GITHUB_MCP_TOOLSETS: ${GITHUB_MCP_TOOLSETS:-repos,pull_requests,issues,git,context}
     volumes:
       # Absolute path on the Docker host (rclone sync target)
       - ${HOST_LOG_DIR}:/data/logs:ro

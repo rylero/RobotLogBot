@@ -4,6 +4,7 @@ Always-on Discord agent for FRC log analysis. Uses the Claude Agent SDK with:
 
 - **scope** — ClaudeScope log analysis ([ClaudeScope](https://github.com/rylero/ClaudeScope))
 - **chiefdelphi** — FRC design research via [chiefdelphi-mcp](https://github.com/rylero/chiefdelphi-mcp)
+- **github** — optional robot-code access via [GitHub MCP](https://github.com/github/github-mcp-server) (read-only)
 
 Default model: `claude-sonnet-4-6`.
 
@@ -35,6 +36,8 @@ Sync wpilogs on the Docker host (see **rclone** below), e.g. `/mnt/robot-logs/20
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `HOST_LOG_DIR` | Absolute host path, e.g. `/mnt/robot-logs/2026-Rebuilt` |
 | `CLAUDE_MODEL` | optional |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | optional fine-grained PAT (Contents: Read) — enables GitHub MCP |
+| `GITHUB_DEFAULT_REPO` | optional `owner/repo` for code questions |
 
 4. **Deploy the stack**
 

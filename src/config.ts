@@ -36,6 +36,17 @@ export const config = {
     "CHIEFDELPHI_MCP_CWD",
     path.resolve(process.cwd(), "../chiefdelphi-mcp"),
   ),
+  /** Fine-grained PAT (Contents: Read) — enables official GitHub MCP when set. */
+  githubToken: optional("GITHUB_PERSONAL_ACCESS_TOKEN") || optional("GITHUB_TOKEN"),
+  githubMcpBin: optional(
+    "GITHUB_MCP_BIN",
+    process.platform === "win32" ? "github-mcp-server.exe" : "github-mcp-server",
+  ),
+  /** Comma-separated toolsets; keep narrow for Discord tool-choice. */
+  githubMcpToolsets: optional("GITHUB_MCP_TOOLSETS", "repos,pull_requests,issues,git,context"),
+  githubMcpReadOnly: optional("GITHUB_MCP_READ_ONLY", "true").toLowerCase() !== "false",
+  /** Optional default repo owner/name for code questions (e.g. rylero/2026-Robot). */
+  githubDefaultRepo: optional("GITHUB_DEFAULT_REPO"),
   rcloneRemote: optional("RCLONE_REMOTE"),
   maxToolRounds: 24,
   maxToolResultChars: 80_000,
